@@ -349,12 +349,32 @@ def probe(host):
     return kind, err.strip()
 
 
+# Newer OS builds dropped update.conf; fall back to /etc/os-release.
+# `head` makes the pipeline succeed even when neither file exists.
+VERSION_CMD = ("{ sed -n 's/^REMARKABLE_RELEASE_VERSION=//p' /usr/share/remarkable/update.conf; "
+               "sed -n 's/^IMG_VERSION=//p' /etc/os-release | tr -d '\"'; } 2>/dev/null | head -n 1")
+
+
 def run(cmd, **kw):
     return subprocess.run(cmd, check=True, env=SSH_ENV, **kw)
 
 
 def ssh(host, script, capture=False):
     return run(["ssh", *SSH_OPTS, host, script], capture_output=capture, text=capture)
+
+
+def ssh_rw(host, script):
+    """Run `script` with the root filesystem writable.
+
+    Newer OS builds mount / read-only. If it is, remount it read-write for
+    the duration of `script` and put it back to read-only afterwards (also
+    on failure). The exit status of `script` is preserved.
+    """
+    return ssh(host,
+               "if grep -q ' / [^ ]* ro[ ,]' /proc/mounts; then "
+               "mount -o remount,rw / || exit 1; "
+               "trap 'mount -o remount,ro / 2>/dev/null' EXIT; "
+               "fi; " + script)
 
 
 def fetch_plugin(host, tmpdir):
@@ -374,7 +394,7 @@ def cmd_check(args):
         data = fetch_plugin(args.host, tmp)
     info = analyze(data)
     ver = ssh(args.host,
-              "sed -n 's/^REMARKABLE_RELEASE_VERSION=//p' /usr/share/remarkable/update.conf",
+              VERSION_CMD,
               capture=True).stdout.strip()
     detected = detect_layout(info)
     if detected is None:
@@ -398,7 +418,7 @@ def deploy(host, patched, orig, no_restart=False):
         local.write_bytes(patched)
         ssh(host, f"cp -n {PLUGIN} {backup}")
         run(["scp", "-q", *SSH_OPTS, str(local), f"{host}:/tmp/libepaper-patched.so"])
-        ssh(host, f"mv /tmp/libepaper-patched.so {PLUGIN}")
+        ssh_rw(host, f"mv /tmp/libepaper-patched.so {PLUGIN}")
     print(f"Deployed. Original kept at {backup}")
     restart(host, no_restart)
 
@@ -408,7 +428,7 @@ def do_restore(host, no_restart=False, quiet=False):
               capture=True).stdout.strip()
     if not out:
         raise SystemExit(f"error: no backup found in {BACKUP_DIR} on the device")
-    ssh(host, f"cp {out} {PLUGIN}")
+    ssh_rw(host, f"cp {out} {PLUGIN}")
     print(f"Restored {out} -> {PLUGIN}")
     restart(host, no_restart, quiet)
 
@@ -586,7 +606,7 @@ def cmd_interactive(args):
     with tempfile.TemporaryDirectory() as tmp:
         data = fetch_plugin(host, tmp)
     ver = ssh(host,
-              "sed -n 's/^REMARKABLE_RELEASE_VERSION=//p' /usr/share/remarkable/update.conf",
+              VERSION_CMD,
               capture=True).stdout.strip()
     info = analyze(data)
     detected = detect_layout(info)
