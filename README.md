@@ -21,9 +21,24 @@ Caps Lock behaves correctly. Each table mirrors the letter assignments of the
 corresponding [xkeyboard-config](https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config)
 layout; dead keys and AltGr punctuation of the source layouts are
 intentionally omitted (`en-intl` is the direct-letter subset of
-"English (intl., with AltGr dead keys)"). Czech, Slovak, and Maltese were
-evaluated and can't be supported faithfully — their standard layouts either
-replace base US keys or rely on dead keys.
+"English (intl., with AltGr dead keys)").
+
+### Base-layer layouts (QWERTZ etc.)
+
+Some languages need more than AltGr letters — their standard layout replaces
+base US keys. The tool supports a second layout flavour that rewrites the
+plain/Shift mappings directly, including **dead keys** (the keymap engine
+composes them natively; verified against the stock US table on OS 6, which
+already contains dead entries itself):
+
+| Layout | Name | Notes |
+|---|---|---|
+| `cs` | Czech (QWERTZ) | full ČSN/xkeyboard-config `cz(basic)`: digits → ě š č ř ž ý á í é (Shift = digits), Z/Y swap, ů/§ on `;`/`'`, dead accents on `=` (Shift+`=` = dead caron → Ď Ť Ň), dead ring on Shift+`~` |
+
+(Previously the notes said Czech and Slovak "can't be supported faithfully" —
+that was true for the AltGr-only approach, and stands for Slovak here; with
+base-layer remapping and native dead-key entries, Czech's standard QWERTZ is
+fully expressible.)
 
 ## Why a binary patch?
 
@@ -48,11 +63,13 @@ patched US table is what that setting selects.
 
 ## Requirements
 
-- reMarkable 2 with a Type Folio (US layout) and SSH access
-  ([developer mode / root access](https://support.remarkable.com/s/article/Developer-mode)).
+- reMarkable 2 or **reMarkable Paper Pro** with a Type Folio (US layout) and
+  SSH access ([developer mode / root access](https://support.remarkable.com/s/article/Developer-mode)).
 - python3 + OpenSSH (ssh/scp) on your computer.
-- Tested on OS 3.26 and 3.28 (rM2). The reMarkable Paper Pro is untested; the
-  script's safety checks will abort rather than corrupt anything unrecognized.
+- Tested on OS 3.26 and 3.28 (rM2, AltGr layouts) and **OS 6.0.112 "wrynose"
+  (Paper Pro)** — the keymap symbol and 16-byte entry format are identical
+  there, and the `cs` base-layer layout was verified end-to-end on hardware.
+  The script's safety checks abort rather than corrupt anything unrecognized.
 
 ## Usage
 
@@ -105,8 +122,11 @@ to fix it for you.
 
 ## Safety notes
 
-- The patch only modifies keymap *data* (no code), only in entries for keys
-  the Type Folio doesn't have, and verifies the result before deploying.
+- The patch only modifies keymap *data* (no code): AltGr layouts are purely
+  additive (existing colliding entries are replaced); base-layer layouts
+  rewrite the unicode/Qt-code bytes of existing entries for the specific
+  (keycode, modifier) pairs they target. Both paths verify the result before
+  deploying.
 - Every run checks the entry format first and aborts on any mismatch, so a
   future incompatible OS build fails safe.
 - Do **not** write to `/sys/pogo/status/lang` while experimenting — writes are
@@ -118,9 +138,11 @@ to fix it for you.
 Keymap entries are 16 bytes:
 `{u16 keycode, u16 unicode, u32 qtcode, u8 required_modifiers, u8 pad, u16 flags, u32 special}`
 — a widened variant of Qt's `QEvdevKeyboardMap::Mapping`. `required_modifiers`
-bit 0x02 is AltGr; `flags` 2 marks letters (Caps Lock applies); modifier keys
-carry their modifier bit in `special`. The US table already maps right Alt to
-`Qt::Key_AltGr`, so adding AltGr letter entries is purely additive.
+bit 0x02 is AltGr; `flags` 2 marks letters (Caps Lock applies), flag 1 marks
+dead keys (the engine composes them natively; the dead entry's `unicode` is
+the combining character and `qtcode` the `Qt::Key_Dead_*` value); modifier
+keys carry their modifier bit in `special`. The US table already maps right
+Alt to `Qt::Key_AltGr`, so adding AltGr letter entries is purely additive.
 
 ## Disclaimer
 

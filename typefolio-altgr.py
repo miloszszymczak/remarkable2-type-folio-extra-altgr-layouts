@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""reMarkable 2 Type Folio Extra AltGr Layouts (US hardware keyboard).
+"""reMarkable Type Folio Extra Layouts (US hardware keyboard).
 
 Stock xochitl compiles its keyboard layouts into the Qt platform plugin
 /usr/lib/plugins/platforms/libepaper.so and offers no way to add one. This
@@ -8,12 +8,22 @@ produces national characters, in the spirit of the "Polish programmers"
 layout. Several layouts are available (see `layouts` command); each mirrors
 the letter assignments of the corresponding xkeyboard-config layout.
 
+Layouts come in two flavours:
+
+  AltGr layouts  - national characters on AltGr/right Alt (+Shift), the base
+                   layer stays US ("pl", "ro", ...).
+  Base layouts   - the plain/Shift layer itself is remapped to a national
+                   keyboard ("cs" = Czech QWERTZ per xkeyboard-config
+                   cz(basic), incl. real dead keys, which the keymap engine
+                   composes natively when they carry FLAG_DEAD and the
+                   Qt::Key_Dead_* qtcode).
+
 It is build-agnostic: the keymap array is located via the dynamic symbol
   EpaperEvdevKeyboardMap::Locale::UnitedStates::keymap
 and the 16-byte entry format is verified against known entries before any
 byte is modified. New entries overwrite mappings for keys that do not
 physically exist on the Type Folio (numeric keypad, NumLock, ScrollLock,
-function keys); colliding AltGr mappings are replaced in place.
+function keys); colliding mappings are replaced in place.
 
 Usage:
     typefolio-altgr.py interactive                   # guided step-by-step wizard
@@ -34,7 +44,10 @@ device under Settings -> General -> Help -> Copyright and licenses). The
 TYPEFOLIO_PASSWORD environment variable is honored with --ask-pass.
 
 Requires: python3 and OpenSSH (ssh/scp) on this machine.
-Tested on reMarkable 2, OS 3.26 and 3.28. After every OS update, re-run `patch`.
+Tested on reMarkable 2, OS 3.26 and 3.28 (AltGr layouts); "cs" additionally
+tested on reMarkable Paper Pro, OS 6.0.112 (wrynose) — the keymap symbol and
+the 16-byte entry format are identical there. After every OS update, re-run
+`patch`.
 """
 
 import argparse
@@ -57,9 +70,21 @@ ENTRY = struct.Struct("<HHIBBHI")  # keycode, unicode, qtcode, mods, pad, flags,
 ENTRY_SIZE = ENTRY.size  # 16
 
 FLAG_DEAD, FLAG_LETTER, FLAG_MODIFIER, FLAG_SYSTEM = 1, 2, 4, 8
-MOD_SHIFT, MOD_ALTGR = 0x01, 0x02
+MOD_PLAIN, MOD_SHIFT, MOD_ALTGR = 0x00, 0x01, 0x02
 QT_KEY_ALTGR = 0x01001103
 KEY_RIGHTALT = 100
+
+# Qt::Key_Dead_* values, and the combining character the engine reports as
+# `unicode` for dead entries (matches the dead entries in the stock US keymap).
+QT_DEAD = {
+    "grave": (0x01001250, 0x0300), "acute": (0x01001251, 0x0301),
+    "circumflex": (0x01001252, 0x0302), "tilde": (0x01001253, 0x0303),
+    "macron": (0x01001254, 0x0304), "breve": (0x01001255, 0x0306),
+    "abovedot": (0x01001256, 0x0307), "diaeresis": (0x01001257, 0x0308),
+    "ring": (0x01001258, 0x030A), "doubleacute": (0x01001259, 0x030B),
+    "caron": (0x0100125A, 0x030C), "cedilla": (0x0100125B, 0x0327),
+    "ogonek": (0x0100125C, 0x0328),
+}
 
 # Keys absent on the Type Folio whose keymap entries are safe to sacrifice:
 # numeric keypad, NumLock, ScrollLock, KPENTER, KPSLASH, and F1-F12.
@@ -121,15 +146,72 @@ LAYOUTS = {
     }),
 }
 
+# Layouts that remap the BASE layer (plain keys, Shift), not just AltGr.
+# Each entry: (key, mods, spec); spec is a character or ("dead", name).
+# Derived per entry: FLAG_LETTER for letters (so CapsLock toggles their
+# case), FLAG_DEAD for dead keys, 0 for punctuation. The Qt keycode is the
+# letter/digit's Qt key, the dead key's Qt::Key_Dead_* value, or ord(char)
+# for punctuation. The engine natively composes FLAG_DEAD entries (verified
+# against the stock US keymap, which carries dead entries itself).
+#
+# "cs" mirrors xkeyboard-config `cz(basic)`: Czech QWERTZ per the ČSN/ISO
+# compromise standard (xkeyboard-config symbols/cz, Kamil Toman 2001).
+BASE_LAYOUTS = {
+    "cs": ("Czech (QWERTZ)", [
+        ("`", MOD_PLAIN, ";"), ("`", MOD_SHIFT, ("dead", "ring")),
+        ("1", MOD_PLAIN, "+"), ("1", MOD_SHIFT, "1"),
+        ("2", MOD_PLAIN, "ě"), ("2", MOD_SHIFT, "2"),
+        ("3", MOD_PLAIN, "š"), ("3", MOD_SHIFT, "3"),
+        ("4", MOD_PLAIN, "č"), ("4", MOD_SHIFT, "4"),
+        ("5", MOD_PLAIN, "ř"), ("5", MOD_SHIFT, "5"),
+        ("6", MOD_PLAIN, "ž"), ("6", MOD_SHIFT, "6"),
+        ("7", MOD_PLAIN, "ý"), ("7", MOD_SHIFT, "7"),
+        ("8", MOD_PLAIN, "á"), ("8", MOD_SHIFT, "8"),
+        ("9", MOD_PLAIN, "í"), ("9", MOD_SHIFT, "9"),
+        ("0", MOD_PLAIN, "é"), ("0", MOD_SHIFT, "0"),
+        ("-", MOD_PLAIN, "="), ("-", MOD_SHIFT, "%"),
+        ("=", MOD_PLAIN, ("dead", "acute")), ("=", MOD_SHIFT, ("dead", "caron")),
+        ("y", MOD_PLAIN, "z"), ("y", MOD_SHIFT, "Z"),
+        ("z", MOD_PLAIN, "y"), ("z", MOD_SHIFT, "Y"),
+        ("[", MOD_PLAIN, "ú"), ("[", MOD_SHIFT, "/"),
+        ("]", MOD_PLAIN, ")"), ("]", MOD_SHIFT, "("),
+        (";", MOD_PLAIN, "ů"), (";", MOD_SHIFT, '"'),
+        ("'", MOD_PLAIN, "§"), ("'", MOD_SHIFT, "!"),
+        ("\\", MOD_PLAIN, ("dead", "diaeresis")), ("\\", MOD_SHIFT, "'"),
+        (",", MOD_SHIFT, "?"), (".", MOD_SHIFT, ":"),
+        ("/", MOD_PLAIN, "-"), ("/", MOD_SHIFT, "_"),
+    ]),
+}
+
+
+def layout_label(name):
+    """Label of a layout (AltGr or base-remap)."""
+    return LAYOUTS[name][0] if name in LAYOUTS else BASE_LAYOUTS[name][0]
+
 
 def layout_entries(name):
-    """Yield (keycode, required_mods, unicode, qtcode) for a layout."""
+    """Yield (keycode, required_mods, unicode, qtcode, flags) for a layout."""
+    if name in BASE_LAYOUTS:
+        for key, mods, spec in BASE_LAYOUTS[name][1]:
+            kc, qt = KEYS[key]
+            if isinstance(spec, tuple) and spec[0] == "dead":
+                qt_dead, combining = QT_DEAD[spec[1]]
+                yield kc, mods, combining, qt_dead, FLAG_DEAD
+            else:
+                uni = ord(spec)
+                yield kc, mods, uni, qt, FLAG_LETTER if spec.isalpha() else 0
+        return
     _, table = LAYOUTS[name]
     for key, chars in table.items():
         kc, qt = KEYS[key]
-        yield kc, MOD_ALTGR, ord(chars[0]), qt
+        yield kc, MOD_ALTGR, ord(chars[0]), qt, FLAG_LETTER
         if len(chars) > 1:
-            yield kc, MOD_ALTGR | MOD_SHIFT, ord(chars[1]), qt
+            yield kc, MOD_ALTGR | MOD_SHIFT, ord(chars[1]), qt, FLAG_LETTER
+
+
+def all_layouts():
+    """All layout names (AltGr + base-remap), sorted."""
+    return sorted(set(LAYOUTS) | set(BASE_LAYOUTS))
 
 
 class Elf:
@@ -219,19 +301,19 @@ def analyze(data):
     off, size = locate_keymap(data)
     altgr_ok = False
     slots = []
-    existing = {}  # (keycode, mods) -> entry position
+    existing = {}  # (keycode, mods) -> (position, unicode, flags)
     for pos, (kc, uni, qt, mods, _, flags, special) in iter_entries(data, off, size):
         if kc == KEY_RIGHTALT and flags == FLAG_MODIFIER and special == MOD_ALTGR:
             altgr_ok = True
-        if kc in SACRIFICIAL and flags == 0:
+        if kc in SACRIFICIAL and flags == 0 and mods == 0:
             slots.append(pos)
-        elif mods & MOD_ALTGR:
-            existing[(kc, mods)] = (pos, uni)
+        else:
+            existing[(kc, mods)] = (pos, uni, flags)
     matches = {}
-    for name in LAYOUTS:
+    for name in all_layouts():
         want = list(layout_entries(name))
-        got = sum(1 for kc, m, uni, _ in want
-                  if existing.get((kc, m), (None, None))[1] == uni)
+        got = sum(1 for kc, m, uni, *_ in want
+                  if existing.get((kc, m), (None, None, None))[1] == uni)
         matches[name] = (got, len(want))
     return {
         "offset": off, "size": size, "entries": size // ENTRY_SIZE,
@@ -261,7 +343,7 @@ def apply_patch(data, layout):
             f"error: device already carries '{detected[0]}' entries "
             f"({detected[1]}/{detected[2]}) — run `restore` first, then patch"
         )
-    if not info["altgr_wired"]:
+    if any(m & MOD_ALTGR for _, m, *_ in want) and not info["altgr_wired"]:
         # Right Alt not wired as AltGr in this build: rewrite its entry.
         fixed = False
         for pos, (kc, *_rest) in iter_entries(data, info["offset"], info["size"]):
@@ -272,23 +354,24 @@ def apply_patch(data, layout):
                 break
         if not fixed:
             raise SystemExit("error: no KEY_RIGHTALT entry found to wire as AltGr")
-    # Colliding AltGr mappings are replaced in place; the rest go into slots.
+    # Targets whose (keycode, mods) entry already exists are replaced in place;
+    # the rest go into sacrificial slots (keys physically absent on the folio).
     slots = list(info["slots"])
-    needed = sum(1 for kc, m, _, _ in want if (kc, m) not in info["existing"])
+    needed = sum(1 for kc, m, *_ in want if (kc, m) not in info["existing"])
     if len(slots) < needed:
         raise SystemExit(
             f"error: only {len(slots)} sacrificial slots for {needed} new entries"
         )
-    for kc, mods, uni, qt in want:
+    for kc, mods, uni, qt, flags in want:
         if (kc, mods) in info["existing"]:
             pos = info["existing"][(kc, mods)][0]
         else:
             pos = slots.pop(0)
-        data[pos : pos + ENTRY_SIZE] = ENTRY.pack(kc, uni, qt, mods, 0, FLAG_LETTER, 0)
+        data[pos : pos + ENTRY_SIZE] = ENTRY.pack(kc, uni, qt, mods, 0, flags, 0)
     got, total = analyze(data)["matches"][layout]
     if got != total:
         raise SystemExit("error: post-patch verification failed")
-    return bytes(data), f"patched {total} entries ({LAYOUTS[layout][0]})"
+    return bytes(data), f"patched {total} entries ({layout_label(layout)})"
 
 
 def sha8(b):
@@ -364,9 +447,11 @@ def fetch_plugin(host, tmpdir):
 
 
 def cmd_layouts(_args):
-    for name, (label, table) in LAYOUTS.items():
-        chars = " ".join(chars[0] for chars in table.values())
-        print(f"{name:8s} {label:40s} {chars}")
+    for name in all_layouts():
+        chars = " ".join(c[0] for c in BASE_LAYOUTS[name][1]) if name in BASE_LAYOUTS \
+            else " ".join(chars[0] for chars in LAYOUTS[name][1].values())
+        layer = "base" if name in BASE_LAYOUTS else "AltGr"
+        print(f"{name:8s} {layout_label(name):40s} {chars}  [{layer}]")
 
 
 def cmd_check(args):
@@ -382,7 +467,7 @@ def cmd_check(args):
     else:
         name, got, total = detected
         full = "fully" if got == total else f"PARTIALLY ({got}/{total})"
-        state = f"{full} patched: {name} — {LAYOUTS[name][0]}"
+        state = f"{full} patched: {name} — {layout_label(name)}"
     print(f"OS version:      {ver or 'unknown'}")
     print(f"plugin sha256:   {sha8(data)}…")
     print(f"US keymap:       {info['entries']} entries at offset {info['offset']:#x}")
@@ -552,13 +637,18 @@ def wizard_connect(host):
 
 
 def choose_layout(current):
-    names = sorted(LAYOUTS)
-    print("\nAvailable layouts (AltGr + letter; add Shift for uppercase):\n")
+    names = all_layouts()
+    print("\nAvailable layouts (AltGr + letter; add Shift for uppercase);\n"
+          "[base] entries remap the base layer directly:\n")
     for i, name in enumerate(names, 1):
-        label, table = LAYOUTS[name]
-        chars = " ".join(c[0] for c in table.values())
+        if name in BASE_LAYOUTS:
+            chars = " ".join((spec[1] if isinstance(spec, tuple) and spec[0] == "dead"
+                              else spec) for _, _, spec in BASE_LAYOUTS[name][1])
+        else:
+            chars = " ".join(c[0] for c in LAYOUTS[name][1].values())
         mark = " (currently installed)" if name == current else ""
-        print(f"  {i}. {name:8s} {label}{mark}")
+        layer = " [base]" if name in BASE_LAYOUTS else ""
+        print(f"  {i}. {name:8s} {layout_label(name)}{layer}{mark}")
         print(f"     {chars}")
     default = str(names.index(current) + 1) if current else str(names.index("pl") + 1)
     while True:
@@ -599,7 +689,7 @@ def cmd_interactive(args):
         name, got, total = detected
         current = name
         state = "installed" if got == total else f"partially installed ({got}/{total})"
-        print(f"Layout patch {state}: {name} — {LAYOUTS[name][0]}")
+        print(f"Layout patch {state}: {name} — {layout_label(name)}")
 
     step(3, "Choose what to do")
     if current:
@@ -624,12 +714,21 @@ def cmd_interactive(args):
     else:
         layout = choose_layout(None)
 
-    label, table = LAYOUTS[layout]
-    step(4, f"Install {label}")
-    examples = list(table.items())[:3]
-    for key, chars in examples:
-        upper = f", AltGr+Shift+{key.upper()} = {chars[1]}" if len(chars) > 1 else ""
-        print(f"  AltGr+{key.upper()} = {chars[0]}{upper}")
+    if layout in BASE_LAYOUTS:
+        label = layout_label(layout)
+        step(4, f"Install {label}")
+        examples = BASE_LAYOUTS[layout][1][:3]
+        for key, mods, spec in examples:
+            mod = "" if mods == MOD_PLAIN else ("Shift+" if mods == MOD_SHIFT else "AltGr+")
+            char = spec[1] if isinstance(spec, tuple) and spec[0] == "dead" else spec
+            print(f"  {mod}{key.upper()} = {char}")
+    else:
+        label, table = LAYOUTS[layout]
+        step(4, f"Install {label}")
+        examples = list(table.items())[:3]
+        for key, chars in examples:
+            upper = f", AltGr+Shift+{key.upper()} = {chars[1]}" if len(chars) > 1 else ""
+            print(f"  AltGr+{key.upper()} = {chars[0]}{upper}")
     if not confirm(f"Install {label} on {host}?", default=True):
         raise SystemExit("Aborted.")
 
@@ -646,8 +745,14 @@ def cmd_interactive(args):
     deploy(host, patched, data, args.no_restart)
 
     print("\n\033[1mDone.\033[0m Attach the Type Folio and try it in a typed note:")
-    for key, chars in examples:
-        print(f"  AltGr+{key.upper()} -> {chars[0]}")
+    if layout in BASE_LAYOUTS:
+        for key, mods, spec in examples:
+            mod = "" if mods == MOD_PLAIN else ("Shift+" if mods == MOD_SHIFT else "AltGr+")
+            char = spec[1] if isinstance(spec, tuple) and spec[0] == "dead" else spec
+            print(f"  {mod}{key.upper()} -> {char}")
+    else:
+        for key, chars in examples:
+            print(f"  AltGr+{key.upper()} -> {chars[0]}")
     print("\nKeep the Type Folio layout set to US/English in Settings > "
           "Language and keyboard.")
     print("A reMarkable OS update will undo this — just run the installer again.")
@@ -658,7 +763,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("command",
                    choices=["interactive", "layouts", "setup", "check", "patch", "restore"])
-    p.add_argument("--layout", default="pl", choices=sorted(LAYOUTS),
+    p.add_argument("--layout", default="pl", choices=all_layouts(),
                    help="layout to apply with `patch` (default: %(default)s)")
     p.add_argument("--host", default="root@10.11.99.1",
                    help="SSH destination of the tablet (default: %(default)s)")
